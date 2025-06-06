@@ -6,266 +6,662 @@ abstract: |
   short version anyway.  Still, when considering the facts from first
   principles, we find that the outcomes of this introspective approach is
   compatible with the guidelines previously established.
-
-  In such an experiment it is then clear that the potential for further
-  development not only depends on previous relationships found but also on
-  connections made during exploitation of this novel new experimental
-  protocol.
 ---
 
 ## Introduction
 
-Twelve hundred years ago — in a galaxy just across the hill...
+Numba (“Numba v1”) [@numba] is a numerically focused, function based,
+just-in-time compiler for Python. The project has been developed in its current
+form for more than a decade, being adopted for a wide range of applications in
+scientific computing, financial modeling, simulation, and machine learning.
+During this time both the needs of the user base and the technology landscape
+have evolved and the engineers who wrote Numba v1 have developed a greater
+understanding of what it takes to compile Python. With this new landscape in
+mind, research started about two years ago on the development of a new
+technology stack to underpin the next generation of Numba (“Numba v2”). This
+work seeks to address some of the current limitations of Numba v1 and provides
+opportunities to compile and optimize user code in ways that were not possible
+until now. The following discusses some of the issues with compiling Python and
+the constraints of Numba v1, explores the use of E-Graph/Equality Saturation
+based technologies and their relationship with super-optimization, demonstrates
+using this technology in some example applications, and looks at future
+directions of research.
 
-This document should be rendered with MyST Markdown [mystmd.org](https://mystmd.org),
-which is a markdown variant inspired by reStructuredText. This uses the `mystmd`
-CLI for scientific writing which can be [downloaded here](https://mystmd.org/guide/quickstart).
-When you have installed `mystmd`, run `myst start` in this folder and
-follow the link for a live preview, any changes to this file will be
-reflected immediately.
+## The problem(s) with compiling Python
 
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vestibulum sapien
-tortor, bibendum et pretium molestie, dapibus ac ante. Nam odio orci, interdum
-sit amet placerat non, molestie sed dui. Pellentesque eu quam ac mauris
-tristique sodales. Fusce sodales laoreet nulla, id pellentesque risus convallis
-eget. Nam id ante gravida justo eleifend semper vel ut nisi. Phasellus
-adipiscing risus quis dui facilisis fermentum. Duis quis sodales neque. Aliquam
-ut tellus dolor. Etiam ac elit nec risus lobortis tempus id nec erat. Morbi eu
-purus enim. Integer et velit vitae arcu interdum aliquet at eget purus. Integer
-quis nisi neque. Morbi ac odio et leo dignissim sodales. Pellentesque nec nibh
-nulla. Donec faucibus purus leo. Nullam vel lorem eget enim blandit ultrices.
-Ut urna lacus, scelerisque nec pellentesque quis, laoreet eu magna. Quisque ac
-justo vitae odio tincidunt tempus at vitae tortor.
+In considering the development of a new numerically focused ahead-of-time
+compiler for Python, it’s helpful to look at some lessons learned in developing
+Numba v1 and how the compiler and technology space has changed over that time.
 
-## Bibliographies, citations and block quotes
+### The Numba v1 compiler
 
-Bibliography files and DOIs are automatically included and picked up by `mystmd`.
-These can be added using pandoc-style citations `[@doi:10.1109/MCSE.2007.55]`
-which fetches the citation information automatically and creates: [@doi:10.1109/MCSE.2007.55].
-Additionally, you can use any key in the BibTeX file using `[@citation-key]`,
-as in [@hume48] (which literally is `[@hume48]` in accordance with
-the `hume48` cite-key in the associated `mybib.bib` file).
-Read more about [citations in the MyST documentation](https://mystmd.org/guide/citations).
+Numba v1 works by translating the Python bytecode for a function into an
+intermediate representation (IR) called Numba IR. Type inference is run on this
+to statically type the variables, it is then lowered to LLVM IR, which is then
+JIT compiled using the LLVM compiler infrastructure. For details see @numba.
 
-If you wish to have a block quote, you can just indent the text, as in:
+The Python bytecode is an IR executed by the Python virtual machine, it is
+necessarily low level, so much so that the majority of the semantics expressed
+in source code, for example array expressions, are entirely lost once encoded
+into bytecode and must be rediscovered later in the compiler pipeline. Numba’s
+IR is a near direct translation of Python bytecode and therefore also lacks
+high-level semantic information from  the original source. As a result,
+recovering the programmer’s intent requires significant analysis of the Numba
+IR, including control-flow reconstruction and type inference. This problem
+manifests itself acutely when, for example, trying to identify regions of code
+which are suitable for parallel execution or when trying to prove amenability
+for array expression fusion.
 
-> When it is asked, What is the nature of all our reasonings concerning matter of fact? the proper answer seems to be, that they are founded on the relation of cause and effect. When again it is asked, What is the foundation of all our reasonings and conclusions concerning that relation? it may be replied in one word, experience. But if we still carry on our sifting humor, and ask, What is the foundation of all conclusions from experience? this implies a new question, which may be of more difficult solution and explication.
->
-> -- @hume48
+Following bytecode to Numba IR translation, the next step in compilation is
+type inference. This is the process of determining the type of all the
+variables in use. It is quite hard to do this using fixed-point iterative
+algorithms, particularly when protocol based code is being compiled (code using
+“dunder” methods). This is because types have to be propagated through the
+system, and then branches pruned and inlining performed based on the arrival of
+concrete type information, which then in turn may expose further areas of code
+that subsequently need further rounds of type propagation, branch pruning and
+inlining. The interdependence creates a cascading effect that is difficult to
+manage in a naive pass-based fixed-point iteration scheme. Essentially this is
+a compiler pass phase ordering problem with no guarantee that the type
+propagation will stabilize. A further side effect of this sort of problem, and
+incremental type inference in general, is that back-tracking invalid paths is
+computationally wasteful and is hard to debug. It also makes it hard to e.g.
+pass an untyped list into a function and to permit compilation to continue with
+the view that the type may be resolved eventually.
 
-Other typography information can be found in the [MyST documentation](https://mystmd.org/guide/typography).
+### A changing landscape for Numba v1
 
-### DOIs in bibliographies
+Considering the rise of machine learning over the last decade, a lot of new
+technologies focus on the use of tensors and the MLIR compiler stack has
+emerged as a popular and higher level abstraction for creating tensor
+expression compilers. This new technology cannot easily be used by Numba v1
+because, as noted previously, the high level semantics and types associated
+with the source code are lost and recovery is hard. To use MLIR would require
+significant levels of “semantic raising” on Numba IR, or development of a MLIR
+dialect for Numba IR and integration of it into the MLIR ecosystem.
+Nevertheless Numba v1 is still very relevant for numerical computing as it can
+compile “general purpose” Python code that does not map well to tensor compiler
+frameworks. What’s needed is compiler technology that can span both areas, to
+allow seamless mixing of general purpose and tensor based code.
 
-In order to include a DOI in your bibliography, add the DOI to your bibliography
-entry as a string. For example:
+Continuing with the new technological demands of today, AI/ML presents a
+greater need for using smaller, often ML-specific, integer and floating point
+types, including those of sub-byte size. Numba v1 has very little capacity at
+present for either expressing or combining these types as it essentially has a
+type system based on NumPy 1.x [@numpy]. Further it is challenging to extend
+both this type system and Numba v1 itself to accommodate new types (Numba’s
+`float16` support is a demonstration of the difficulties). To support new types
+new technology is needed where such extensions are considered much earlier on
+in the design.
 
-```{code-block} bibtex
-:emphasize-lines: 7
-:linenos:
-@book{hume48,
-  author    =  "David Hume",
-  year      = {1748},
-  title     = "An enquiry concerning human understanding",
-  address   = "Indianapolis, IN",
-  publisher = "Hackett",
-  doi       = "10.1017/CBO9780511808432",
-}
-```
+Finally, Numba v1 is a JIT compiler and this has in some aspects made it quite
+easy to write, particularly due to the forgiving nature of LLVM’s MCJIT. The
+consequence of this is that “converting” Numba v1 to produce AOT compiled
+output is very difficult. Numba has C/C++ extension modules as part of its
+runtime for the JIT, it compiles functions as it “discovers” the call graph and
+it also doesn’t consider important design problems like compilation unit scopes
+and linking. The lesson learned from Numba v1 is that if AOT compilation is a
+desired target, it needs to be designed in from the start.
 
-### Citing software and websites
+### A motivating case
 
-Any paper relying on open-source software would surely want to include citations.
-Often you can find a citation in BibTeX format via a web search.
-Authors of software packages may even publish guidelines on how to cite their work.
+To demonstrate some of these issues in relation to compiler flexibility and optimisation, a motivating example of the associativity of matrix multiplication can be used. In this example, six matrices are being multiplied together:
 
-For convenience, citations to common packages such as
-Jupyter [@jupyter],
-Matplotlib [@matplotlib],
-NumPy [@numpy],
-pandas [@pandas1; @pandas2],
-scikit-learn [@sklearn1; @sklearn2], and
-SciPy [@scipy]
-are included in this paper's `.bib` file.
+$$
+A1 \times A2 \times A3 \times A4 \times  A5 \times A6
+$$
 
-In this paper we not only terraform a desert using the package terradesert [@terradesert], we also catch a sandworm with it.
-To cite a website, the following BibTeX format plus any additional tags necessary for specifying the referenced content is recommended.
-If you are citing a team, ensure that the author name is wrapped in additional braces `{Team Name}`, so it is not treated as an author's first and last names.
-
-```{code-block} bibtex
-:emphasize-lines: 2
-:linenos:
-@misc{terradesert,
-  author = {{TerraDesert Team}},
-  title  = {Code for terraforming a desert},
-  year   = {2000},
-  url    = {https://terradesert.com/code/},
-  note   = {Accessed 1 Jan. 2000}
-}
-```
-
-## Source code examples
-
-No paper would be complete without some source code.
-Code highlighting is completed if the name is given:
+Using NumPy syntax, it looks like this:
 
 ```python
-def sum(a, b):
-    """Sum two numbers."""
-
-    return a + b
+def six_matrix_multiply(A1, A2, A3, A4, A5, A6):
+return A1 @ A2 @ A3 @ A4 @ A5 @ A6
 ```
 
-Use the `{code-block}` directive if you are getting fancy with line numbers or emphasis. For example, line-numbers in `C` looks like:
+From Numba v1’s perspective, it will analyse the bytecode and create some Numba IR which will naively store the result from each operation in the chain into a temporary variable for use in the next operation. Type inference will then run and work out that each `@` is actually a `numpy.dot` operation and will resolve that as a function that will take two array inputs and return an array output. Numba will then lower this typed Numba IR to a chain of (wrapped) BLAS `GEMM` calls, with Numba’s built-in runtime providing the memory buffers for the array temporaries.
 
-```{code-block} c
-:linenos: true
+Whilst Numba v1 did resolve the types correctly within its type system, because its type system is hard to extend, it cannot be made to go further and do the necessary shape inference needed to be able to optimise the sequence of matrix multiplications. Arguably Numba v1 could have a custom optimisation pass added to its pipeline that operates on the low level Numba IR and rewrites it to try and reuse memory buffers associated with temporaries and perhaps looks at the matrix memory ordering to try and improve cache utilization. However, this would be a very custom compiler pass, tuned to this one situation, and almost certainly quite hard to write.
 
-int main() {
-    for (int i = 0; i < 10; i++) {
-        /* do something */
+Now imagine applying a Numba v2 that doesn’t have the limitations of v1 to the same problem. First a higher-level IR is emitted than that comes from the bytecode. Subsequently, both type and shape inference are performed to identify the exact shapes of all the arrays in the computation. This now leads to an interesting problem, in that the shapes and operations are all known, but optimising this is incredibly hard in part because the problem space is so large. In fact, the number of possible grouping under the associativity rule is the Catalan number $ C_5=\frac{(2 \times 5)\text{!}}{(5+1)\text{!}5\text{!}}=42 $.
+
+Consider that matrix multiplication is a well defined problem and that the approximate floating point cost of for multiplying matrices PmkQkn  is 2mnk. Furthermore, the associativity rule for multiplication is well known and easily expressed. There is now a problem space forming where the operations are known, the types and shapes of the operands are known, rules of associativity could be applied, and a cost is available for all operations. An optimal solution exists in this , but as noted before, the space is large. To solve this problem a new technique is employed, that of super-optimization via equality saturation. This technique uses a set of rewrite rules and effectively builds all possible programs simultaneously. It then assigns costs to each expression and then uses a cost model to extract the optimal solution.
+
+## Developing an Equality Saturation based solution
+
+The ideas behind equality saturation lie in the e-graph data structure, which in turn originates from automatic theorem provers [@Nelson1980] and SAT solvers [@doi:10.1007/978-3-540-78800-3_24], where it was used to efficiently represent congruence closure. More recently, this theory has been adapted into the powerful equality saturation (EqSat) technique , which has enabled term-rewriting-based compiler optimizations (@doi:10.5281/zenodo.4072013, @doi:10.48550/arXiv.2304.04332).
+
+Traditional term rewriting systems rely on fixed rule application schedules, discarding the original term after each rewrite. As a result, their effectiveness depends heavily on carefully designed transformation pass orderings, which are often brittle and unable to guarantee optimal results across all cases. Some systems mitigate this by using backtracking [@doi:10.1145/3341301.3359630], where previous terms are restorable, but this approach is computationally expensive, as all alternatives must be evaluated sequentially. EqSat addresses this by applying all rewrite rules simultaneously and retaining all resulting variants. It efficiently stores these alternatives by grouping semantically equivalent terms into equivalence classes (e-classes), with each e-class containing multiple e-nodes each representing equivalent program terms. This structure enables substantial reductions in both search time and memory usage, allowing the compiler to explore the full space of program variants without requiring explicit rule application schedules. Consequently, EqSat eliminates phase-ordering problems and promotes a more composable and extensible compiler architecture.
+
+EqSat and the ability to easily employ rewriting rules exposes a realm of optimisation capabilities that were not previously available. For example, if it is known that the application domain is deep-learning, then floating point error tolerance is likely quite high and various rewrite rules to exploit this situation could be applied. First, it is possible to use lower-precision data types such as 8-bit floats or even 4-bit floats. If the application needs to be deployed on an industrial scale that serves thousands of requests per second, or at the edge running on power-limited mobile phone processors, the power usage becomes an important factor as well. Use of integer addition to approximate the floating point multiplication for lower power scenarios is another option.  The computation could be done as an approximation, maybe as a low-rank approximation via SVD compression. All of these possibilities are encodable as rewrite rules and become part of the possible solution space within the equality saturation based optimiser. Extracting the optimal solution just becomes a question of defining a cost model that is appropriate to the domain e.g. performance, power cost, code size, hardware.
+
+## Compiler Design
+
+### Architecture Overview
+
+Numba v2 architecture follows the conventional structure of many compilers; a frontend for canonicalising and translating an input language into an intermediate form, a middle end for performing optimisations and a backend for translating the intermediate form into an executable. The following sections explain the process in more detail and should be read in conjunction with the following diagram.
+
+:::{figure} arch.svg
+:label: fig:arch
+:width: 100%
+Compiler architecture
+:::
+
+### Converting imperative Python to functional form
+
+As noted above, to use egglog effectively, the Python AST is first translated into an S-expression form that supports term rewriting. A direct encoding of the AST into S-expression form is insufficient, as it captures only the syntactic structure of the program. The goal, however, is to perform term rewriting based on semantic equivalence and so the syntactic form is translated into a semantic representation. An additional challenge is that Python is an imperative language with implicit state mutations. To accommodate the necessary semantics, the AST is converted into a *regionalized value-state dependence graph* (RVSDG).
+
+RVSDG is a data-oriented program representation that can simplify compiler analysis and transformation. Unlike the common SSA-CFG IRs[^SSACFG], RVSDG does not explicitly encode the control-flow graph (CFG). Prior studies (@doi:10.48550/arXiv.1912.05036, @doi:10.1145/174675.177907, @lawrence2007) have shown that RVSDG enables faster and simpler implementations of classical compiler passes. This reflects a broader trend towards data-dependency based compilation, even for imperative languages, as evidenced by frameworks like MLIR [@doi:10.1109/CGO51591.2021.9370308].
+
+[^SSACFG]: SSA-CFG IR refers to an Intermediate Representation that combines Static Single Assignment (SSA) form with an explicit Control Flow Graph (CFG) structure. It is used in LLVM.
+
+In RVSDG, programs are represented in terms of dataflow graphs, where edges indicate value and state dependencies, and nodes denote computation. Structured control flow is modelled using regions that encapsulate other nodes and edges, resembling block diagrams in digital circuit design. Within this structure, parallelization opportunities appear as independent groups of nodes.
+
+There are three types of structured control flow regions: linear dependency, switches for optional paths, and tail loops. The resulting graph is an acyclic graph with nested regions, making it amenable to hierarchical analysis. Every node, including control-flow regions, in an RVSDG is an operation with incoming and outgoing “ports” for values and states.
+
+Following the algorithms outlined in @doi:10.1145/2693261, the Python AST is first converted into a structurized control-flow graph[^val2024], each imperative Python expression is then converted into an RVSDG-conforming S-expression by explicitly passing an `io` state through each operation. Any operation with side-effects receives and returns an `io` state. Initially, all Python operations are conservatively assumed to have side-effects. This assumption can later be relaxed through analysis such as type-inference, which is done using the same EqSat rule mechanism as other code transformations.
+
+[^val2024]: For details about this process, see the EuroScipy 2024 talk titled [“Reguarlizing Python using Structured Control Flow” by Valentin Haenel](https://pretalx.com/euroscipy-2024/talk/U3EMKF/)
+
+### Controlflow handling and semantic raising
+
+Encoding Python into RVSDG is conceptually similar to translating Python into a pure functional language. In this representation, all operations appear pure because state is passed as a first-class value. An effect-free operation is simply one that doesn’t modify the `io` state. Many traditional compiler passes are simplified in RVSDG because of the uniform treatment of states and values. Since there is no control-flow graph, as the program is viewed in a data-oriented perspective, control-flow constructs, such as conditionals and loops, are treated like any other operations. This eliminates the need for specialized logic to handle control-flow and reduces the complexity of compiler passes.
+
+Practically, the compiler uses an S-Expression based IR  as an RVSDG based functional encoding suitable for translating into the [egglog Python library bindings](https://github.com/egraphs-good/egglog-python). At this point, the Python program is in a form in which rewrite rules can be written and subsequently applied through EqSat.
+
+For example, simplification of if-else constructs given a constant condition computable at compile-time can be written as succinctly as the following rule:
+
+```python
+
+@ruleset
+def ruleset_const_fold_if_else(a: Term, b: Term, c: Term, operands: TermList):
+    yield rewrite(
+        # Define the if-else pattern to match
+        Term.IfElse(cond=a, then=b, orelse=c, operands=operands),
+        subsume=True,  # subsume to disable extracting the original term
+    ).to(
+        # Define the target expression
+        # This applies region `b` (then) using the `operands`.
+        Term.Apply(b, operands),
+        # Given that the condition is constant True
+        IsConstantTrue(a),
+    )
+    yield rewrite(
+        # Define the if-else pattern to match
+        Term.IfElse(cond=a, then=b, orelse=c, operands=operands),
+        subsume=True,  # subsume to disable extracting the original term
+    ).to(
+        # Define the target expression.
+        # This applies region `c` (orelse) using the `operands`.
+        Term.Apply(c, operands),
+        # Given that the condition is constant False
+        IsConstantFalse(a),
+    )
+
+```
+
+The `Term.IfElse` node represents a conditional expression in RVSDG. Simplifying it is straightforward when the condition is a constant. A pattern matching rewrite rule replaces the entire *if-else* construct with the corresponding selected branch. The logic is intuitive and compact when expressed in the declarative rule system of *egglog*. The simplicity of this transformation highlights the benefits of treating control flow as just another term in the rewrite system.
+
+:::{figure} ifelse.svg
+:label: fig:ifelse
+:width: 100%
+This illustrates the process of applying the if-else simplification rewrite rule on the e-graph. Each blue box represents an e-node. The dotted box represents e-classes—blue-boxes inside are equivalent to each other. The left diagram is the initial state. The center diagram shows the condition (Cond) is recognized as a constant True. The right diagram shows the establishing of equivalence between the IfElse term and the Then term.
+:::
+
+
+Loops presents a greater challenge as RVSDG supports only tail-controlled loops, while Python uses constructs like while-loop and for-loop that do not naturally fit this mode. To bridge this gap to allow for more intuitive reasoning in EqSat, *semantic raising* is employed to recover the high-level Python loop constructs by matching their low-level RVSDG patterns. This allows full recovery of Python loop semantics from raw RVSDG form, enabling use of more intuitive rewrite rules.
+
+As an example, RVSDG restructurization converts a for-loop into the following CFG structure.
+
+```python
+condition = compute_init_loop_condition()
+do {
+    if condition {
+        condition, vals = loop_body(*vals)
     }
-    return 0;
+} while condition
+```
+
+Through semantic raising, the loop structure above can be “raised into a more abstract representation:
+
+```
+Py_ForLoop(iterator, operands) { loop_body }
+```
+
+To recognize the pattern as a `for ... in range` loop, which is common in numerical code, further semantic raising can be employed. This high-level representation enables a more direct mapping to MLIR’s *affine* dialect.
+
+### Limitations of EqSat
+
+One known challenge of EqSat is that saturation can create very large e-graphs that exceed the memory limits of a given machine. In the case of Numba v2, this issue has not arisen as the project is still in its early stages. However, prior work provides insight into techniques for managing e-graph growth.
+
+@doi:10.1145/3617232.3624873 reintroduce phases into the rewriting process to control the e-graph expansion. They break rewriting into three phases:
+
+* Expansion phase:  explores alternative unoptimized program variants; e.g. applying math identities.
+* Compilation phase: converts unoptimized terms to optimized ones.
+* Optimization phase: searches for better representation among optimized terms.
+
+To prevent unbounded graph growth, they also employ cost-based pruning, using an abstract cost model to select the best intermediate program after expansion and compilation phase. Saturation in these phases is bounded by a time limit and only once improvements plateau, according to the abstract cost model, the optimization phase is applied.
+
+@doi:10.48550/arXiv.2111.13040 offer a different approach. Instead of optimizing directly over full program representations, they use *program sketches*—compressed abstractions of the full program—to guide optimization. This helps reduce e-graph size and keeps optimization tractable.
+
+These concerns are particularly relevant for compilers that target low-level representations, such as ISA or machine code, where program representations can be enormous In contrast, Numba v2 applies EqSat at a much higher level. Low-level optimizations are delegated to MLIR. High-level program representations tend to be significantly smaller, and MLIR supports expressive dialects that further reduce complexity. For example, recognizing and translating a `for … in range` loop into MLIR’s *affine* dialect can eliminate many low-level details and shrink the overall program graph.
+
+### Cost-based extraction
+
+The cost-based extraction in Numba v2 is built around three guiding principles:
+
+* **Intuitive:** it should be intuitive for users to express cost equations naturally for each operation in the cost model.
+* **Stability.** Cost-computation must be stable such that the computed cost of any subprogram remains consistent across different compilations so as to ensure reproducibility.
+* **Fast.** Practicality and performance are prioritized even at the expense of finding the absolute optimal solution, especially given the scale of real-world programs.
+
+In the generalized case, costs are modelled as vectors of floats, allowing for future experimentation with multi-objective evaluation. Finding the exact minimal cost extraction from an e-graph is NP-hard [@doi:10.48550/arXiv.2408.17042]. An *iterative relaxation* algorithm is used to manage this complexity and to efficiently handle cycles in the e-graph, so as to permit convergence to a near-optimal solution.
+
+
+### Iterative relaxation algorithm
+
+The extraction algorithm is inspired by the Bellman-Ford algorithm [@bellman1958], combining dynamic programming with iterative refinement. It decomposes the extraction problem into subproblems, computing an initial best-effort solution that is progressively improved upon as more information becomes available in subsequent iterations. Unlike Dijkstra-based approaches commonly used in other e-graph systems [^dijkstra\_extract], Bellman-Ford permits negative costs, though these are not currently required in the Numba v2 test cases. The iterative nature also offers a practical advantage by allowing early termination based on a time budget.
+
+[^dijkstra_extract]: [eggcc](https://github.com/egraphs-good/eggcc/blob/a1b06ea52e6a25200fd8014a7c11de9c21c08635/dag_in_context/src/greedy_dag_extractor.rs#L1346) and [faster_greedy_dag](https://github.com/egraphs-good/extraction-gym/blob/main/src/extract/faster_greedy_dag.rs)
+
+The algorithm has the following steps:
+
+1. **Dependency graph construction:** Starting from the root e-class (the function definition term), the algorithm traces its member e-nodes. Each e-node references child e-classes, forming a dependency graph. In this graph, e-classes point to e-nodes, and e-nodes point to their child e-classes.
+2. **Cost function retrieval:** For each e-node, the algorithm retrieves the associated cost function used to compute its contribution to the total cost**.**
+3. **Identify constant values:** Constant values that participate in cost calculations are identified, such as the shape of a tensor in a matrix multiplication operation.
+4. **Compute the BFS layers:** Since the dependency graph may contain cycles, a true topological sort is not possible. Instead, breadth-first search (BFS) layers are used to approximate topological ordering.
+5. **Iterate until convergence:** The cost is computed bottom-up for each e-node by using the cost of its child e-classes in the e-node’s cost function. If the child e-class has not yet been evaluated, its cost is temporarily treated as infinite. Each e-class aggregates the costs of its member e-nodes and selects the best. The algorithm continues until convergence. The criteria for convergence are:
+   * The number of finite-cost e-nodes remains unchanged.
+   * The maximum cost change falls below a predefined threshold
+
+By construction, e-nodes form a directed acyclic graph (DAG) since they represent RVSDG terms and only reference the operands (child nodes). However, cycles can arise through e-node merging during rewriting. For example, the identity `pow(x, 1) = x` causes both expressions to reside in the same e-class, creating a cyclic self reference. These cycles are not problematic and they are resolved early in the relaxation process. Once a lower cost is found for a node, it is immediately selected as the currently optimal choice, effectively breaking the cycle.
+
+### Dual cost model
+
+Accurate cost-based extraction of the e-graph requires careful handling of differing cost aggregation requirements for expression DAGs and control-flow DAGs.
+
+In the e-graph, expressions are represented as DAGs where nodes may be shared in other expressions. Since the cost is computed locally for each operation without full visibility to the entire graph structure due to the bottom up traversal, common subexpression can be counted more than once in an expression tree. For example, `x * x * x` can redundantly count the cost of `x` multiple times (See @fig:expr_cost) , making it appear more expensive than `pow(x, 3)`. To avoid this, node-based cost accounting is performed to properly recognize shared expression nodes.
+
+Control-flow operations such as loops require a different treatment. A loop’s cost should reflect its trip count multiplied by the cost of its body. Unlike shared subexpressions in expression DAGs, the cost of the loop-body is not discounted, even if it appears in other parts of the program. This calls for edge-based cost accounting. For example, in @fig:cf_cost, the cost of `Body` should contribute to the cost of both `Loop1` and `Loop2`.
+
+A dual cost model is adopted to resolve the conflicting situation:
+
+* **Local cost computation.** Each e-node defines a cost equation that receives the costs of its child nodes (operands). For example, a loop operation might compute its cost as the cost of the loop body multiplied by the trip out. For simple operations like scalar addition, the cost is simply a constant.  These local cost functions can be user-defined and customizable.
+* **Child-dependent cost computation.** To handle shared subexpression nodes, an external cost that aggregates the costs of a node’s children without duplication is computed. This requires tracking the optimal e-node for each e-class along with its total cost (local \+ external). During extraction, the full set of contributing e-nodes is computed to ensure that each e-node is only counted once. This approach is similar to the [*FasterGreedyDagExtractor*](https://github.com/egraphs-good/extraction-gym/blob/main/src/extract/faster_greedy_dag.rs).
+
+:::{figure} expr_cost.svg
+:label: fig:expr_cost
+:width: 65%
+This illustrates the expression x * x * x. The cost of node #1 is the local_cost#1 + local_cost#2 + local_cost#3.
+:::
+
+:::{figure} cf_cost.svg
+:label: fig:cf_cost
+:width: 100%
+This illustrates a function with two loops, for which the loop-bodies are equivalent in the e-graph. The function (#0) has a cost that is the sum of all local costs of its unique children. In Loop1 (#1) and Loop2 (#2) the cost of the Body is contributing to their local costs, respectively.
+:::
+
+### Further considerations
+
+This work represents an early stage in the substantial development needs of Numba v2. While initial results are promising, future efforts will need to scale to more realistic examples,focus on refining the techniques, and conduct deeper analysis.
+
+**Larger and whole-program examples**
+
+To better evaluate the effectiveness and scalability of this technique, testing on more complex and realistic programs is needed. As part of this effort, the next goal is to compile a NumPy-based implementation of a small LLaMa based LLM [@llama3.np].
+
+**Extending to multi-dimensional cost models.**
+The cost-based extraction algorithm is designed to support n-dimensional cost vectors, enabling multi-objective optimization (e.g. runtime, memory usage, floating-point accuracy, power). So far, the examples have primarily used 1-dimensional cost, but future work will explore richer cost models.
+
+## Case Studies
+
+### GELU Approximation
+
+
+Traditional compilers have limited ability to relax floating-point precision. Many expose a fast-math flag that enables basic operation reassociation or using fused multiply-add instruction, but they typically lack more advanced capabilities such as replacing transcendental functions with cheaper approximations.
+
+In domains like deep learning, it’s often possible to speed up programs by reducing the precision of specific functions. Activation functions are a good candidate for this kind of optimization.
+
+As a concrete example, GELU (Gaussian Error Linear Unit), which is a common in some transformer architectures [@doi:10.48550/arXiv.1606.08415], is used.
+
+GELU equation:
+
+$$
+\text{GELU}(x) \approx 0.5x \left(1 + \tanh\left(\sqrt{\frac{2}{\pi}}
+ \left(x + 0.044715x^3\right)\right)\right)
+$$
+
+The Python implementation:
+
+```python
+def gelu_tanh_forward(x):
+    dt = np.float32
+    erf = np.tanh(np.sqrt(dt(2) / dt(np.pi)) * (x + dt(0.044715) * x**3))
+    return dt(0.5) * x * (dt(1) + erf)
+```
+
+Pade44 approximation is used to simplify the tanh(x) function:
+
+$$
+tanh⁡(x)\approx \frac{10x^3 + 105x}{x^4 + 45x^2 + 105}
+$$
+
+In egglog, the rewrite rule for it is expressed as below:
+
+```python
+rewrite(Npy_tanh_float32(x)).to(
+    div(
+        add(mul(flt(10), pow(x, liti64(3))), mul(flt(105), x)),
+        add(
+            add(pow(x, liti64(4)), mul(flt(45), pow(x, liti64(2)))),
+            flt(105),
+        ),
+    )
+)
+```
+
+
+Corresponding formal inference rule representation of the rewrite rule:
+$$
+\frac{\text{expr} = \text{Npy\_tanh\_float32}(x)}{\text{expr} \rightarrow \frac{10x^3 + 105x}{x^4 + 45x^2 + 105}}
+$$
+
+This can combine with a simplification of the pow(x, constant) term with the identity:
+
+$$
+x^{ival}=x \cdot x^{\text{ival}-1}
+$$
+
+As egglog rules:
+```
+rewrite(pow(x, lit64(ival))).to(
+    mul(x, pow(x, lit64(ival - 1))),
+    ival >= 1,
+)
+rewrite(pow(x, lit64(i64(0))), subsume=True).to(
+    Npy_float32(Term.LiteralF64(float(1))),
+)
+```
+
+Corresponding formal inference rule representation of the rewrite rule:
+$$
+\frac{\text{expr} = \text{pow}(x, \text{ival}), \quad \text{ival} \geq 1}{\text{expr} \rightarrow \text{mul}(x, \text{pow}(x, \text{ival} - 1))}
+$$
+$$
+\frac{\text{expr} = \text{pow}(x, \text{i64}(0))}{\text{expr} \rightarrow \text{f32}(1.0)}
+$$
+
+
+Egglog saturates these rules, so there is no need to specify an ordering or how many times to apply them. For example, `pow()` calls are automatically expanded into multiplications after the applying the pade44 approximation for `tanh()`.
+
+As a result, user programs can be optimized without requiring direct modifications. Each rewrite rule is also reusable across different programs.
+
+Two ways are envisioned for users to take advantage of this kind of program rewriting.
+
+The first is by manual selection from a catalog of rewrite rules. Users will need domain knowledge to choose rules that are appropriate for their use case.
+
+The second is to use a cost model to guide the selection of approximation functions. The cost model can be extended to account not only for runtime performance but also for floating-point accuracy.
+
+
+### Associativity Rule of Matrix Multiply
+
+
+In the introduction, there was discussion on how the associativity of matrix multiplication can be exploited to choose a more efficient grouping for performance. Here, the process is demonstrated using Numba v2.
+
+In egglog, the associativity rule can be spelled as:
+
+```python
+rewrite(MatMul(MatMul(ary0, ary1), ary2)).to(
+    MatMul(ary0, MatMul(ary1, ary2))
+)
+```
+
+Corresponding formal inference rule representation of the rewrite rule:
+$$
+\frac{\text{expr} = \text{MatMul}(\text{MatMul}(\text{ary0}, \text{ary1}), \text{ary2})}{\text{expr} \rightarrow \text{MatMul}(\text{ary0}, \text{MatMul}(\text{ary1}, \text{ary2}))}
+$$
+
+Saturation recursively applies the associativity rule to a succession of matrix multiplication and generate all possible groupings.
+
+
+Shape and type inference rules for the matrix multiplication is expressed as follows:
+
+```python
+
+rule(
+    # array desc propagation
+    ary2 == MatMul(ary0, ary1),
+    ad0.toType() == TypeVar(ary0).getType(),
+    ad1.toType() == TypeVar(ary1).getType(),
+    ad0.ndim == i64(2),
+    ad1.ndim == i64(2),
+    m := ad0.dim(0),
+    n := ad1.dim(1),
+    ad0.dim(1) == ad1.dim(0),
+    ad0.dtype == ad1.dtype,
+).then(
+    # set output dims
+    ad2 := ArrayDescOp(ary2),
+    set_(TypeVar(ary2).getType()).to(ad2.toType()),
+    set_(ad2.ndim).to(2),
+    set_(ad2.dim(0)).to(m),
+    set_(ad2.dim(1)).to(n),
+    set_(ad2.dtype).to(ad0.dtype),
+)
+
+```
+
+Corresponding formal inference rule representation of the rewrite rule:
+$$
+\frac{
+\begin{array}{c}
+\text{ary2} = \text{MatMul}(\text{ary0}, \text{ary1}), \\
+\text{ary0.ndim} = 2, \quad \text{ary1.ndim} = 2, \\
+m = \text{ary0.shape[0]}, \quad n = \text{ary1.shape[1]}, \\
+\text{ary0.shape[1]} = \text{ary1.shape[0]}, \\
+\text{ary0.dtype} = \text{ary1.dtype}
+\end{array}
+}{
+\begin{array}{c}
+\text{ary2}.\text{ndim} \rightarrow 2, \\
+\text{ary2}.\text{shape[0]} \rightarrow m, \\
+\text{ary2}.\text{shape[1]} \rightarrow n, \\
+\text{ary2}.\text{dtype} \rightarrow \text{ary0}.\text{dtype}
+\end{array}}
+$$
+
+Finally, to recognize that a matrix-multiplication has known shape, the followings rule is used:
+
+```python
+
+rule(
+    ary2 == MatMul(ary0, ary1),
+    ad0.toType() == TypeVar(ary0).getType(),
+    ad1.toType() == TypeVar(ary1).getType(),
+    ad0.ndim == i64(2),
+    ad1.ndim == i64(2),
+    Dim.fixed(shapeM) == ad0.dim(0),
+    Dim.fixed(shapeN) == ad0.dim(1),
+    Dim.fixed(shapeN) == ad1.dim(0),
+    Dim.fixed(shapeK) == ad1.dim(1),
+    ad0.dtype == ad1.dtype,
+).then(
+    # Convert to MatMul_KnownShape
+    union(ary2).with_(
+        MatMul_KnownShape(ary0, ary1, shapeM, shapeN, shapeK)
+    ),
+)
+```
+Corresponding formal inference rule representation of the rewrite rule:
+$$
+\frac{
+\begin{array}{c}
+\text{ary2} = \text{MatMul}(\text{ary0}, \text{ary1}), \\
+\text{ary0.ndim} = 2, \quad \text{ary1.ndim} = 2, \\
+\text{shapeM} = \text{ary0.shape[0]}, \\
+\text{shapeK} = \text{ary0.shape[1]}, \\
+\text{shapeK} = \text{ary1.shape[0]}, \\
+\text{shapeN} = \text{ary1.shape[1]}, \\
+\text{ary0}.\text{dtype} = \text{ary1}.\text{dtype}
+\end{array}
+}{
+\text{ary2} \rightarrow \text{MatMul\_KnownShape}(\text{ary0}, \text{ary1}, \text{shapeM}, \text{shapeN}, \text{shapeK})
 }
+$$
+
+
+To guide the extraction, the cost for the matrix-multiplication is expressed as follows:
+
+```python
+match op, tuple(children):
+    case "MatMul_KnownShape", (_lhs, _rhs, m, n, k):
+        return self.get_equation(
+            lambda lhs, rhs, *_, m, n, k: 2 * m * n * k,
+            constants=dict(m=m, n=n, k=k),
+        )
 ```
 
-Or a snippet from the above code, starting at the correct line number, and emphasizing a line:
+The `MatMul_KnownShape` operation is assigned the cost of $ 2 m n k$. Using the `constants` keyword, the cost equation can access to the literal values for `m`, `n` and `k`, rather than the cost of that constant terms themselves.
 
-```{code-block} c
-:linenos: true
-:lineno-start: 2
-:emphasize-lines: 3
-    for (int i = 0; i < 10; i++) {
-        /* do something */
-    }
+For testing, the Python source generation backend is used along with the cost-based extraction to optimize the following succession of matrix multiplications:
+
+```python
+def f0(arr0, arr1, arr2, arr3):
+    return arr0 @ arr1 @ arr2 @ arr1 @ arr2 @ arr3
 ```
 
-You can read more about code formatting in the [MyST documentation](https://mystmd.org/guide/code).
 
-## Figures, Equations and Tables
+with inputs like:
 
-It is well known that Spice grows on the planet Dune [@Atr03].
-Test some maths, for example $e^{\pi i} + 3 \delta$.
-Or maybe an equation on a separate line:
-
-```{math}
-g(x) = \int_0^\infty f(x) dx
+```python
+M = 200
+N = 100
+K = 200
+arr0 = np.random.random((M, N))
+arr1 = np.random.random((N, K))
+arr2 = np.random.random((K, N))
+arr3 = np.random.random((N, 1))
 ```
 
-or on multiple, aligned lines:
+In researching this technique, prototypes for Numba v2 were developed. When applying an equality saturation base optimiser (along with appropriate associatively rewrite rules and cost models) to the matrix multiplication associativity problem above, it successfully found a solution that might well have been a “guess” that someone hand optimising the code would have made:
 
-```{math}
-\begin{aligned}
-g(x) &= \int_0^\infty f(x) dx \\
-     &= \ldots
-\end{aligned}
+
+```python
+def f1(arr0, arr1, arr2, arr3):
+    x = arr1 @ arr2
+    return arr0 @ (x @ (x @ arr3))
 ```
 
-The area of a circle and volume of a sphere are given as
+This version assumed that the reused of the `arr1 @ arr2` term would reduce the overall computation time. Additionally, the right associativity grouping should take advantage of a very small dimension in `arr3` (`arr3.shape[1]`).
 
-```{math}
-:label: circarea
+Following this an interesting event occurred, the rewrite rules were improved slightly and as a result a new solution was found that had even better performance. The new version is listed below:
 
-A(r) = \pi r^2.
+
+```python
+def f2(arr0, arr1, arr2, arr3):
+    return arr0 @ (arr1 @ (arr2 @ (arr1 @ (arr2 @ arr3))))
 ```
 
-```{math}
-:label: spherevol
+The newly extracted version does not leverage the duplicated term. Instead it uses the full right associativity grouping.
 
-V(r) = \frac{4}{3} \pi r^3
+At this point the evaluation of necessary applied mathematics was undertaken to check the solutions and gain understanding into the performance characteristics. It turned out that the problem space used in the examples depended heavily on the value of `k` (the inner dimension of some of the GEMMs), and the compiler was actually identifying this in practice and selecting different solutions based on this value\!
+
+
+The performance of these three versions are evaluated by running in regular Python interpreter with NumPy. The result is summarized in the following table:
+
+
+| Function | Time    | Speedup |
+|----------|---------|---------|
+| f0       | 956μs   | 1×      |
+| f1       | 209μs   | 4×      |
+| f2       |  49μs   | 19×     |
+
+The automatically extracted version (`f2`) is 4x faster than the hand-optimized version (`f1`), and 19x faster than the original (`f0`). This demonstrates how even a simple expression can lead to significant performance gains through careful reorganization of computation.
+
+However, performing this kind of optimization manually is not ideal, as selecting the best ordering requires searching through a combinatorial space of possible arrangements. Moreover, in realistic applications with multiple abstraction layers, such expressions typically emerge only after aggressive inlining, which depends on thorough static analysis of the program. Manual optimization undermine the benefits of abstractions, making the program harder to read, maintain, and improve. Numba v2 will enable this kind of superoptimization automatically.
+
+
+### High-level Tensor Rewrite
+
+
+TASO [@doi:10.1145/3341301.3359630] automatically generates graph substitution rules for tensor computations in deep neural networks (DNNs). Once these rules are generated, they are applied to the DNN compute graph using a cost-based backtracking search, serving as a form of superoptimization. TENSAT [@doi:10.48550/arXiv.2101.01332] builds on this approach by replacing the sequential search with EqSat, which reduces search time by 48× and produces better optimization results. In this case study, a graph substitution rule inspired by TASO and TENSAT within the compiler is implemented.
+
+
+Consider this Python source code:
+
+```python
+def original_mma(input_1, input_2, input_3, input_4):
+    out1 = np.matmul(input_1, input_3)
+    out2 = np.matmul(input_2, input_4)
+    return out1 + out2
 ```
 
-We can then refer back to Equation {ref}`circarea` or
-{ref}`spherevol` later.
-The `{ref}` role is another way to cross-reference in your document, which may be familiar to users of Sphinx.
-See complete documentation on [cross-references](https://mystmd.org/guide/cross-references).
+A TASO/TENSAT rule suggests that the optimized output is:
 
-Mauris purus enim, volutpat non dapibus et, gravida sit amet sapien. In at
-consectetur lacus. Praesent orci nulla, blandit eu egestas nec, facilisis vel
-lacus. Fusce non ante vitae justo faucibus facilisis. Nam venenatis lacinia
-turpis. Donec eu ultrices mauris. Ut pulvinar viverra rhoncus. Vivamus
-adipiscing faucibus ligula, in porta orci vehicula in. Suspendisse quis augue
-arcu, sit amet accumsan diam. Vestibulum lacinia luctus dui. Aliquam odio arcu,
-faucibus non laoreet ac, condimentum eu quam. Quisque et nunc non diam
-consequat iaculis ut quis leo. Integer suscipit accumsan ligula. Sed nec eros a
-orci aliquam dictum sed ac felis. Suspendisse sit amet dui ut ligula iaculis
-sollicitudin vel id velit. Pellentesque hendrerit sapien ac ante facilisis
-lacinia. Nunc sit amet sem sem. In tellus metus, elementum vitae tincidunt ac,
-volutpat sit amet mauris. Maecenas[^footnote-1] diam turpis, placerat[^footnote-2] at adipiscing ac,
-pulvinar id metus.
-
-[^footnote-1]: On the one hand, a footnote.
-[^footnote-2]: On the other hand, another footnote.
-
-:::{figure} figure1.png
-:label: fig:stream
-This is the caption, sandworm vorticity based on storm location in a pleasing stream plot. Based on example in [matplotlib](https://matplotlib.org/stable/plot_types/arrays/streamplot.html).
-:::
-
-:::{figure} figure2.png
-:label: fig:em
-This is the caption, electromagnetic signature of the sandworm based on remote sensing techniques. Based on example in [matplotlib](https://matplotlib.org/stable/plot_types/stats/hist2d.html).
-:::
-
-As you can see in @fig:stream and @fig:em, this is how you reference auto-numbered figures.
-To refer to a sub figure use the syntax `@label [a]` in text or `[@label a]` for a parenhetical citation (i.e. @fig:stream [a] vs [@fig:stream a]).
-For even more control, you can simply link to figures using `[Figure %s](#label)`, the `%s` will get filled in with the number, for example [Figure %s](#fig:stream).
-See complete documentation on [cross-references](https://mystmd.org/guide/cross-references).
-
-```{list-table} This is the caption for the materials table.
-:label: tbl:materials
-:header-rows: 1
-* - Material
-  - Units
-* - Stone
-  - 3
-* - Water
-  - 12
-* - Cement
-  - {math}`\alpha`
+```python
+def optimized_mma(input_1, input_2, input_3, input_4):
+    concat_input = np.hstack([input_1, input_2])
+    concat_weight = np.vstack([input_3, input_4])
+    return np.matmul(concat_input, concat_weight)
 ```
 
-We show the different quantities of materials required in
-@tbl:materials.
 
-Unfortunately, markdown can be difficult for defining tables, so if your table is more complex you can try embedding HTML:
 
-:::{table} Area Comparisons (written in html)
-:label: tbl:areas-html
+Corresponding egglog rewrite rule is as follows:
 
-<table>
-<tr><th rowspan="2">Projection</th><th colspan="3" align="center">Area in square miles</th></tr>
-<tr><th align="right">Large Horizontal Area</th><th align="right">Large Vertical Area</th><th align="right">Smaller Square Area<th></tr>
-<tr><td>Albers Equal Area   </td><td align="right"> 7,498.7   </td><td align="right"> 10,847.3  </td><td align="right">35.8</td></tr>
-<tr><td>Web Mercator        </td><td align="right"> 13,410.0  </td><td align="right"> 18,271.4  </td><td align="right">63.0</td></tr>
-<tr><td>Difference          </td><td align="right"> 5,911.3   </td><td align="right"> 7,424.1   </td><td align="right">27.2</td></tr>
-<tr><td>Percent Difference  </td><td align="right"> 44%       </td><td align="right"> 41%       </td><td align="right">43%</td></tr>
-</table>
-:::
-
-or if you prefer LaTeX you can try `tabular` or `longtable` environments:
-
-```{raw} latex
-\begin{table*}
-  \begin{longtable*}{|l|r|r|r|}
-  \hline
-  \multirow{2}{*}{\bf Projection} & \multicolumn{3}{c|}{\bf Area in square miles} \\
-  \cline{2-4}
-   & \textbf{Large Horizontal Area} & \textbf{Large Vertical Area} & \textbf{Smaller Square Area} \\
-  \hline
-  Albers Equal Area   & 7,498.7   & 10,847.3  & 35.8  \\
-  Web Mercator        & 13,410.0  & 18,271.4  & 63.0  \\
-  Difference          & 5,911.3   & 7,424.1   & 27.2  \\
-  Percent Difference  & 44\%      & 41\%      & 43\%  \\
-  \hline
-  \end{longtable*}
-
-  \caption{Area Comparisons (written in LaTeX) \label{tbl:areas-tex}}
-\end{table*}
+```python
+rewrite(
+    ewadd(matmul(ary1, ary3), matmul(ary2, ary4)),
+).to(matmul(hstack(ary1, ary2), vstack(ary3, ary4)))
 ```
 
-Perhaps we want to end off with a quote by Lao Tse[^footnote-3]:
+Corresponding formal inference rule representation of the rewrite rule:
 
-> Muddy water, let stand, becomes clear.
+$$
+\frac{\text{expr} = \text{ewadd}(\text{matmul}(\text{ary1}, \text{ary3}), \text{matmul}(\text{ary2}, \text{ary4}))}{\text{expr} \rightarrow \text{matmul}(\text{hstack}(\text{ary1}, \text{ary2}), \text{vstack}(\text{ary3}, \text{ary4}))}
+$$
 
-[^footnote-3]: $\mathrm{e^{-i\pi}}$
+Under the hood, the original funciton is translated as the following RVSDG-IR (some details are truncated for readability):
+
+```
+original_mma = Func (Args 'input_1' 'input_2'  'input_3' 'input_4')
+$0 = Region <- !io input_1 input_2 input_3 input_4
+{
+  $1 = PyLoadGlobal $0[0] 'np'
+  $2 = PyAttr $0[0] $1 'matmul'
+  $3 = PyCall $2[1] $2[0] $0[1], $0[3]
+  $4 = PyLoadGlobal $3[0] 'np'
+  $5 = PyAttr $3[0] $4 'matmul'
+  $6 = PyCall $5[1] $5[0] $0[2], $0[4]
+  $7 = DbgValue 'out1' $3[1]
+  $8 = DbgValue 'out2' $6[1]
+  $9 = PyBinOp + $6[0] $7, $8
+} [830] -> !io=$9[0] !ret=$9[1]
+```
+
+Internally, the curated rules perform the following steps to enable the short optimization rule above:
+
+- Recognize `np` as a global reference to the `numpy` module.
+- Recognize `np.matmul` as the matrix-multiplication function
+- Transform calls to `np.matmul` as pure function calls named `matmul`.
+- Perform shape and type inference to determine the output array's shape and type.
+- Identify binary operation `+` of the results of the matrix multiplications as elementwise addition of matrices. The operation is pure and renamed to `ewadd`.
+- Perform broadcasting to determine the output array's shape and type.
+
+The optimized RVSDG-IR is listed below (with truncation for readability):
+
+```
+transformed_original_mma = Func (Args 'input_1' 'input_2' 'input_3' 'input_4')
+$0 = Region <- !io input_1 input_2 input_3 input_4
+{
+  $1 = NbOp_Npy_HStack_KnownShape $0[1] $0[2] 102400 256
+  $2 = NbOp_Npy_VStack_KnownShape $0[3] $0[4] 256 7680
+  $3 = NbOp_MatMul_KnownShape $1 $2 102400 256 7680
+} [1079] -> !io=$0[0] !ret=$3
+```
+
+Encoding TASO/TENSAT rules into the compiler is straightforward and can be automated. This allows a future where the database of optimization rules can continuously expand by integrating with automatic graph substitution discovery system such as TASO.
+
+Domain experts can translate their optimization techniques into reusable rules, enabling the entire community to benefit from collective knowledge. This approach contrasts with the current workflow, where optimizations are developed in isolation and rarely reused.
+
+
+## Conclusion
+
+This exploratory work has demonstrated that super-optimization of imperative Python code is a realistic possibility. Translating Python code first into a highly structured form and then into a functional form permitted the use of equality saturation based optimisation. This method was shown to preserve or recover the high level types and semantics in such a way that MLIR could be used as a good route for lowering mixed general purpose and tensor based programs. It was further shown that egglog provides an accessible way for users to write domain specific optimisations with a high degree of expressability, this turning optimisation into a cost modelling and extraction problem. Traditional problems such as the phase ordering of passes are eliminated which further enables compilation of Python constructs that are typically problematic. There are a number of remaining technical issues to understand and explore but initial indications suggest that this approach to Python compilation is incredibly promising and puts a powerful set of optimisation tools into the hands of domain experts and users alike.

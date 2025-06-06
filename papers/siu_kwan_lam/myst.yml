@@ -11,7 +11,11 @@ project:
   authors:
     - name: Siu Kwan Lam
       email: siu@anaconda.com
-      orcid: 0000-0000-0000-0000
+      orcid: 0000-0002-5220-3307
+      affiliations:
+        - Anaconda, Inc.
+    - name: Stuart Archibald
+      email: sarchibald@anaconda.com
       affiliations:
         - Anaconda, Inc.
     - name: Stan Seibert
@@ -22,6 +26,7 @@ project:
     - python
     - compiler
     - equality saturation
+    - e-graph
     - MLIR
   # Add the abbreviations that you use in your paper here
   abbreviations:
