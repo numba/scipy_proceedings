@@ -588,7 +588,7 @@ def gelu_tanh_forward(x):
 Pade44 approximation is used to simplify the tanh(x) function:
 
 $$
-tanh⁡(x)\approx \frac{10x^3 + 105x}{x^4 + 45x^2 + 105}
+tanh(x) \approx \frac{10x^3 + 105x}{x^4 + 45x^2 + 105} 
 $$
 
 In egglog, the rewrite rule for it is expressed as below:
