@@ -15,7 +15,6 @@ abstract: |
   broad range of numerical and scientific Python applications.
 ---
 
-
 ## Introduction
 
 The Numba team is developing a new version of the Numba compiler (Numba v2) to
@@ -115,40 +114,6 @@ incremental type inference in general, is that back-tracking invalid paths is
 computationally wasteful and is hard to debug. It also makes it hard to e.g.
 pass an untyped list into a function and to permit compilation to continue with
 the view that the type may be resolved eventually.
-
-### A changing landscape for Numba v1
-
-Considering the rise of machine learning over the last decade, a lot of new
-technologies focus on the use of tensors and the MLIR compiler stack has
-emerged as a popular and higher level abstraction for creating tensor
-expression compilers. This new technology cannot easily be used by Numba v1
-because, as noted previously, the high level semantics and types associated
-with the source code are lost and recovery is hard. To use MLIR would require
-significant levels of “semantic raising” on Numba IR, or development of a MLIR
-dialect for Numba IR and integration of it into the MLIR ecosystem.
-Nevertheless Numba v1 is still very relevant for numerical computing as it can
-compile “general purpose” Python code that does not map well to tensor compiler
-frameworks. What’s needed is compiler technology that can span both areas, to
-allow seamless mixing of general purpose and tensor based code.
-
-Continuing with the new technological demands of today, AI/ML presents a
-greater need for using smaller, often ML-specific, integer and floating point
-types, including those of sub-byte size. Numba v1 has very little capacity at
-present for either expressing or combining these types as it essentially has a
-type system based on NumPy 1.x [@numpy]. Further it is challenging to extend
-both this type system and Numba v1 itself to accommodate new types (Numba’s
-`float16` support is a demonstration of the difficulties). To support new types
-new technology is needed where such extensions are considered much earlier on
-in the design.
-
-Finally, Numba v1 is a JIT compiler and this has in some aspects made it quite
-easy to write, particularly due to the forgiving nature of LLVM’s MCJIT. The
-consequence of this is that “converting” Numba v1 to produce AOT compiled
-output is very difficult. Numba has C/C++ extension modules as part of its
-runtime for the JIT, it compiles functions as it “discovers” the call graph and
-it also doesn’t consider important design problems like compilation unit scopes
-and linking. The lesson learned from Numba v1 is that if AOT compilation is a
-desired target, it needs to be designed in from the start.
 
 ### A motivating case
 
