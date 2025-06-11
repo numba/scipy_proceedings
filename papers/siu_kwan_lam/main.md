@@ -91,7 +91,7 @@ necessarily low level, so much so that the majority of the semantics expressed
 in source code, for example array expressions, are entirely lost once encoded
 into bytecode and must be rediscovered later in the compiler pipeline. Numba’s
 IR is a near direct translation of Python bytecode and therefore also lacks
-high-level semantic information from  the original source. As a result,
+high-level semantic information from the original source. As a result,
 recovering the programmer’s intent requires significant analysis of the Numba
 IR, including control-flow reconstruction and type inference. This problem
 manifests itself acutely when, for example, trying to identify regions of code
@@ -181,7 +181,7 @@ The ideas behind equality saturation lie in the e-graph data structure, which
 in turn originates from automatic theorem provers [@Nelson1980] and SAT solvers
 [@doi:10.1007/978-3-540-78800-3_24], where it was used to efficiently represent
 congruence closure. More recently, this theory has been adapted into the
-powerful equality saturation (EqSat) technique , which has enabled
+powerful equality saturation (EqSat) technique, which has enabled
 term-rewriting-based compiler optimizations (@doi:10.5281/zenodo.4072013,
 @doi:10.48550/arXiv.2304.04332).
 
@@ -546,9 +546,9 @@ the Body is contributing to their local costs, respectively.
 
 ### Further considerations
 
-This work represents an early stage in the substantial development needs of
+This work represents an early stage in the substantial development work of
 Numba v2. While initial results are promising, future efforts will need to
-scale to more realistic examples,focus on refining the techniques, and conduct
+scale to more realistic examples, focus on refining the techniques, and conduct
 deeper analysis.
 
 **Larger and whole-program examples**
@@ -928,7 +928,7 @@ rewrite(
 ).to(matmul(hstack(ary1, ary2), vstack(ary3, ary4)))
 ```
 
-Corresponding formal inference rule representation of the rewrite rule:
+The corresponding formal inference rule representation of the rewrite rule is:
 
 $$
 \frac{\text{expr} = \text{ewadd}(\text{matmul}(\text{ary1}, \text{ary3}),
