@@ -2,38 +2,85 @@
 # Ensure that this title is the same as the one in `myst.yml`
 title: "Numba v2: Towards a SuperOptimizing Python Compiler"
 abstract: |
-  A short version of the long version that is way too long to be written as a
-  short version anyway.  Still, when considering the facts from first
-  principles, we find that the outcomes of this introspective approach is
-  compatible with the guidelines previously established.
+  This paper presents early work on Numba v2, a general-purpose compiler
+  for Python that integrates equality saturation (EqSat) as a foundation
+  for program analysis and transformation. Whilst inspired in part by
+  the needs of AI/ML workloads, and also supporting tensor
+  optimizations, Numba v2 is not a tensor-oriented compiler. Instead, it
+  provides a flexible framework where user-defined mathematical and
+  domain-specific rewrites participate in the compilation process as a
+  complement to the compilation supported by Numba today. This
+  paper outlines the design of Numba v2’s EqSat-based compiler and its
+  potential to serve as an extensible, superoptimizing compiler for a
+  broad range of numerical and scientific Python applications.
 ---
+
 
 ## Introduction
 
-Numba (“Numba v1”) [@numba] is a numerically focused, function based,
-just-in-time compiler for Python. The project has been developed in its current
-form for more than a decade, being adopted for a wide range of applications in
-scientific computing, financial modeling, simulation, and machine learning.
-During this time both the needs of the user base and the technology landscape
-have evolved and the engineers who wrote Numba v1 have developed a greater
-understanding of what it takes to compile Python. With this new landscape in
-mind, research started about two years ago on the development of a new
-technology stack to underpin the next generation of Numba (“Numba v2”). This
-work seeks to address some of the current limitations of Numba v1 and provides
-opportunities to compile and optimize user code in ways that were not possible
-until now. The following discusses some of the issues with compiling Python and
-the constraints of Numba v1, explores the use of E-Graph/Equality Saturation
-based technologies and their relationship with super-optimization, demonstrates
-using this technology in some example applications, and looks at future
-directions of research.
+The Numba team is developing a new version of the Numba compiler (Numba v2) to
+meet the evolving computational demands of the modern workloads, including, but
+not limited to, those in AI/ML. Whilst these domains have popularized
+high-level optimization techniques based on tensor-oriented programming, Numba
+v2 is not a specialized tensor compiler;  instead, it is a general-purpose
+compiler that supports tensors. It integrates equality saturation (EqSat) as a
+core mechanism for program analysis and transformation. The use of EqSat allows
+the compiler to blend user-defined mathematical rewriting and other domain
+specific rewriting into the transformation pipeline for compiling numerically
+oriented Python code with loop and branch constructs. Although Numba v2 is
+still under active development, this paper presents its new EqSat-based
+compilation strategy as a foundation for an extensible
+superoptimizing[^superoptimizer] compiler.
 
-## The problem(s) with compiling Python
+[^superoptimizer]: A superoptimizer exhaustively searches for the optimal
+program [@doi:10.1145/36177.36194].
 
-In considering the development of a new numerically focused ahead-of-time
-compiler for Python, it’s helpful to look at some lessons learned in developing
-Numba v1 and how the compiler and technology space has changed over that time.
 
-### The Numba v1 compiler
+### The importance of mathematical rewrites
+
+AI/ML has popularized tensor-oriented programming. In contrast to
+array-oriented programming, where an array is a data-structure without
+mathematical meaning, tensor-orientated programming has an associated
+mathematical nature. This move to such higher level abstractions allows the
+compiler to manage low-level details such as buffer reuse, DMA
+transfers[^DMA] to accelerators, and even asynchronous transfers in
+distributed systems. It also enables the compiler to do analysis and perform
+optimizations in terms of the mathematical properties of tensors.
+
+[^DMA]: A direct-memory-access (DMA) transfer refers to hardware peripherals
+handling read from and write to memory without involving the processor. These
+transfers occur asynchronously with respect to the processor.
+
+One of the challenges with the currently hugely popular large-language models
+(LLMs) is that Transformers are computationally expensive.
+[@doi:10.48550/arXiv.2307.08691] manually optimized the *Attention* layer in
+*Transformer*s to improve performance, building on FlashAttention’s
+[@doi:10.48550/arXiv.2205.14135] fusing of the softmax operation into the
+matrix-multiply operation. A reviewer of the paper asked why compilers couldn’t
+perform the necessary fusion, to which the author answered:
+
+> Compilers can generally perform fusion. However, optimizations that require
+mathematical rewriting of the same expression (while maintaining numerical
+stability) are generally harder for compilers.  
+>
+> —- @doi:10.48550/arXiv.2307.08691 answering [why compiler cannot create
+FlashAttention-2](https://openreview.net/forum?id=mZn2Xyh9Ec&noteId=aJEl0I0mkG%20)
+
+The gap between what practitioners need and what compilers can provide is
+fulfilled by mathematical rewrites, expressed strategically using domain
+knowledge to allow for more aggressive optimization. In this paper, the use of
+EqSat is proposed to address this issue. EqSat allows mathematical rewrites and
+other code transformations to be expressed in declarative logical rules. The
+compiler can then explore all program variants derived from these rules, hence
+*saturation*. Finally, the optimal program variant is obtained via a cost-based
+extraction. This approach leads to a superoptimizing compiler.
+
+### Phase ordering problems in Numba v1
+
+Numba v1 suffers from the phase-ordering problem—a well-known challenge in
+compiler design where the order of compiler passes can significantly impact the
+result. EqSat offers a principled solution by exploring all rewrite
+possibilities simultaneously without a specific order.   
 
 Numba v1 works by translating the Python bytecode for a function into an
 intermediate representation (IR) called Numba IR. Type inference is run on this
@@ -157,7 +204,7 @@ expressed. There is now a problem space forming where the operations are known,
 the types and shapes of the operands are known, rules of associativity could be
 applied, and a cost is available for all operations. An optimal solution exists
 in this , but as noted before, the space is large. To solve this problem a new
-technique is employed, that of super-optimization via equality saturation. This
+technique is employed, that of superoptimization via equality saturation. This
 technique uses a set of rewrite rules and effectively builds all possible
 programs simultaneously. It then assigns costs to each expression and then uses
 a cost model to extract the optimal solution.
@@ -981,18 +1028,24 @@ in isolation and rarely reused.
 
 ## Conclusion
 
-This exploratory work has demonstrated that super-optimization of imperative
-Python code is a realistic possibility. Translating Python code first into a
-highly structured form and then into a functional form permitted the use of
-equality saturation based optimisation. This method was shown to preserve or
-recover the high level types and semantics in such a way that MLIR could be
-used as a good route for lowering mixed general purpose and tensor based
-programs. It was further shown that egglog provides an accessible way for users
-to write domain specific optimisations with a high degree of expressability,
-this turning optimisation into a cost modelling and extraction problem.
-Traditional problems such as the phase ordering of passes are eliminated which
-further enables compilation of Python constructs that are typically
-problematic. There are a number of remaining technical issues to understand and
-explore but initial indications suggest that this approach to Python
-compilation is incredibly promising and puts a powerful set of optimisation
-tools into the hands of domain experts and users alike.
+This exploratory work demonstrates the use of equality saturation (EqSat) as a
+powerful mechanism for the superoptimization of imperative Python code. Python
+code is first translated into a highly structured IR and then into a functional
+form as RVSDG, concisely encoding programs, as an e-graph, using a
+data-oriented representation. This encoding makes it possible to unify
+general-purpose and tensor-oriented computation. Analysis rules are applied to
+the e-graph to reconstruct high-level semantics and type information, thus
+enabling semantics-aware rewrites. 
+
+The use of egglog provides an accessible way for users to write domain specific
+optimizations with a high degree of expressiveness. Program optimization is
+reframed as a problem of cost-modelling and extraction rather than
+heuristic-driven pass sequencing. This eliminates the traditional challenges of
+phase ordering, which have hindered the compilation of highly dynamic Python
+programs.
+
+Several technical challenges remain—including scalability of large rewrite rule
+sets, and the design of multi-objective cost-based extraction strategies.
+Nonetheless, the early results are promising and suggest that this approach
+provides a powerful and extensible optimisation framework, bringing
+superoptimization capabilities within reach of domain experts and users alike.
