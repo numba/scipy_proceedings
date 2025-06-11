@@ -163,7 +163,8 @@ the Catalan number $ C_5=\frac{(2 \times 5)\text{!}}{(5+1)\text{!}5\text{!}}=42
 $.
 
 Consider that matrix multiplication is a well defined problem and that the
-approximate floating point cost of for multiplying matrices PmkQkn  is 2mnk.
+approximate floating point cost of for multiplying matrices 
+$P_{m \times k} \times Q_{k \times n}$ is $2mnk$.
 Furthermore, the associativity rule for multiplication is well known and easily
 expressed. There is now a problem space forming where the operations are known,
 the types and shapes of the operands are known, rules of associativity could be
