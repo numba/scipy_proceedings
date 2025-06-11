@@ -920,7 +920,7 @@ def optimized_mma(input_1, input_2, input_3, input_4):
 
 
 
-Corresponding egglog rewrite rule is as follows:
+The corresponding egglog rewrite rule is:
 
 ```python
 rewrite(
