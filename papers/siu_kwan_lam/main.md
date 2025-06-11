@@ -168,8 +168,8 @@ $P_{m \times k} \times Q_{k \times n}$ is $2mnk$.
 Furthermore, the associativity rule for multiplication is well known and easily
 expressed. There is now a problem space forming where the operations are known,
 the types and shapes of the operands are known, rules of associativity could be
-applied, and a cost is available for all operations. An optimal solution exists
-in this , but as noted before, the space is large. To solve this problem a new
+applied, and a cost is available for all operations. An optimal solution
+exists, but as noted before, the space is large. To solve this problem a new
 technique is employed, that of superoptimization via equality saturation. This
 technique uses a set of rewrite rules and effectively builds all possible
 programs simultaneously. It then assigns costs to each expression and then uses
@@ -619,7 +619,7 @@ rewrite(Npy_tanh_float32(x)).to(
 ```
 
 
-Corresponding formal inference rule representation of the rewrite rule:
+The corresponding formal inference rule representation of the rewrite rule is:
 $$
 \frac{\text{expr} = \text{Npy\_tanh\_float32}(x)}{\text{expr} \rightarrow 
     \frac{10x^3 + 105x}{x^4 + 45x^2 + 105}}
@@ -643,7 +643,7 @@ rewrite(pow(x, lit64(i64(0))), subsume=True).to(
 )
 ```
 
-Corresponding formal inference rule representation of the rewrite rule:
+The corresponding formal inference rule representation of the rewrite rule is:
 $$
 \frac{\text{expr} = \text{pow}(x, \text{ival}), \quad \text{ival} \geq
 1}{\text{expr} \rightarrow \text{mul}(x, \text{pow}(x, \text{ival} - 1))}
@@ -687,7 +687,7 @@ rewrite(MatMul(MatMul(ary0, ary1), ary2)).to(
 )
 ```
 
-Corresponding formal inference rule representation of the rewrite rule:
+The corresponding formal inference rule representation of the rewrite rule is:
 $$
 \frac{\text{expr} = \text{MatMul}(\text{MatMul}(\text{ary0}, \text{ary1}),
 \text{ary2})}{\text{expr} \rightarrow \text{MatMul}(\text{ary0},
@@ -725,7 +725,7 @@ rule(
 
 ```
 
-Corresponding formal inference rule representation of the rewrite rule:
+The corresponding formal inference rule representation of the rewrite rule is:
 $$
 \frac{
 \begin{array}{c}
@@ -767,7 +767,7 @@ rule(
     ),
 )
 ```
-Corresponding formal inference rule representation of the rewrite rule:
+The corresponding formal inference rule representation of the rewrite rule is:
 $$
 \frac{
 \begin{array}{c}
