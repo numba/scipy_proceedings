@@ -42,6 +42,10 @@ project:
         - jupyter
         - sklearn1
         - sklearn2
+        - Nelson1980
+        - lawrence2007
+        - bellman1958
+        - llama3.np 
   exports:
     - id: pdf
       format: typst
