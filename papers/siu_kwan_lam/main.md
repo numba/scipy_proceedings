@@ -17,7 +17,7 @@ abstract: |
 
 ## Introduction
 
-The Numba team is developing a new version of the Numba compiler (Numba v2) to
+The Numba team is developing a new version of the Numba compiler (Numba v2)[^numba_v2_book] to
 meet the evolving computational demands of the modern workloads, including, but
 not limited to, those in AI/ML. Whilst these domains have popularized
 high-level optimization techniques based on tensor-oriented programming, Numba
@@ -30,6 +30,8 @@ oriented Python code with loop and branch constructs. Although Numba v2 is
 still under active development, this paper presents its new EqSat-based
 compilation strategy as a foundation for an extensible
 superoptimizing[^superoptimizer] compiler.
+
+[^numba_v2_book]: Early development work: [Numba v2 Compiler Design](https://numba.pydata.org/numba-prototypes/sealir_tutorials/index.html).
 
 [^superoptimizer]: A superoptimizer exhaustively searches for the optimal
 program [@doi:10.1145/36177.36194].
