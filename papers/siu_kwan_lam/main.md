@@ -476,7 +476,7 @@ The extraction algorithm is inspired by the Bellman-Ford algorithm
 decomposes the extraction problem into subproblems, computing an initial
 best-effort solution that is progressively improved upon as more information
 becomes available in subsequent iterations. Unlike Dijkstra-based approaches
-commonly used in other e-graph systems [^dijkstra\_extract], Bellman-Ford
+commonly used in other e-graph systems [^dijkstra_extract], Bellman-Ford
 permits negative costs, though these are not currently required in the Numba v2
 test cases. The iterative nature also offers a practical advantage by allowing
 early termination based on a time budget.
