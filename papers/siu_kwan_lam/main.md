@@ -584,16 +584,17 @@ sub-cubic growth ($k^{2.44}$). This growth rate is substantially lower than the
 theoretical exponential rate because e-graphs inherently perform structural
 matching that compresses the representation.
 
-Both saturation and extraction phases exhibit sub-quadratic scaling
-($n^{1.8}$). In practice, such pathological cases of long chains of associative
-operations are uncommon, and since associativity rules serve only optimization
-purposes, compilation time can be capped as needed. The sub-quadratic growth
-ensures EqSat remains tractable for realistic numerical programs.
+Both saturation and extraction phases exhibit sub-quadratic scaling ($n^{1.8}$)
+w.r.t. number of e-classses. In practice, such pathological cases of
+long chains of associative operations are uncommon, and since associativity
+rules serve only optimization purposes, compilation time can be capped as
+needed. The sub-quadratic growth ensures EqSat remains tractable for realistic
+numerical programs.
 
 :::{figure} egraph_scaling_matmul.png
 :label: fig:egraph_scaling_matmul
 (a) Left: saturation and extraction time scaling w.r.t. e-graph size.
-(b) Right: e-graph size scaling w.r.t. matrix-multiplication chain.
+(b) Right: e-graph size scaling w.r.t. matrix-multiplication chain length.
 :::
 
 
