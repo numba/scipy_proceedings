@@ -17,7 +17,7 @@ abstract: |
 
 ## Introduction
 
-The Numba team is developing a new version of the Numba compiler (Numba v2) to
+The Numba team is developing a new version of the Numba compiler (Numba v2)[^numba_v2_book] to
 meet the evolving computational demands of the modern workloads, including, but
 not limited to, those in AI/ML. Whilst these domains have popularized
 high-level optimization techniques based on tensor-oriented programming, Numba
@@ -30,6 +30,8 @@ oriented Python code with loop and branch constructs. Although Numba v2 is
 still under active development, this paper presents its new EqSat-based
 compilation strategy as a foundation for an extensible
 superoptimizing[^superoptimizer] compiler.
+
+[^numba_v2_book]: Early development work: [Numba v2 Compiler Design](https://numba.pydata.org/numba-prototypes/sealir_tutorials/index.html).
 
 [^superoptimizer]: A superoptimizer exhaustively searches for the optimal
 program [@doi:10.1145/36177.36194].
@@ -236,6 +238,16 @@ following diagram.
 Compiler architecture
 :::
 
+A key architectural distinction between Numba v1 and v2 lies in their treatment
+of middle-end optimization. Numba v1 has a minimal middle-end that handles type
+resolution and basic IR transformations before lowering to LLVM IR. This design
+places the optimization burden on LLVM's backend passes. This architectural
+shift enables optimizations that are fundamentally inaccessible to v1's
+pipeline, as demonstrated by the 19× speedup achieved in
+[](#associativity-rule-of-matrix-multiply) through purely algebraic
+reorganization.
+
+
 ### Converting imperative Python to functional form
 
 As noted above, to use egglog effectively, the Python AST is first translated
@@ -282,6 +294,12 @@ Python operations are conservatively assumed to have side-effects. This
 assumption can later be relaxed through analysis such as type-inference, which
 is done using the same EqSat rule mechanism as other code transformations.
 
+This approach differs from prior work on Program Expression Graphs (PEGs)
+[@stepp2011], which handle effects through a single global state token.
+RVSDG simplifies effect handling by using explicit state edges within
+hierarchical regions that naturally enforce sequential ordering through
+structured control flow representation.
+
 [^val2024]: For details about this process, see the EuroScipy 2024 talk titled
     [“Reguarlizing Python using Structured Control Flow” by Valentin
     Haenel](https://pretalx.com/euroscipy-2024/talk/U3EMKF/)
@@ -305,8 +323,15 @@ bindings](https://github.com/egraphs-good/egglog-python). At this point, the
 Python program is in a form in which rewrite rules can be written and
 subsequently applied through EqSat.
 
-For example, simplification of if-else constructs given a constant condition
-computable at compile-time can be written as succinctly as the following rule:
+E-graph rewrite rules are akin to logic programming. They operate declaratively
+without specifying application strategy and are therefore inherently
+composable. The rewrite system uses pattern matching to identify transformable
+program structures and conditional guards to ensure transformation validity.
+Each rule specifies a source pattern to match against the e-graph and a target
+pattern representing the equivalent transformation, with optional conditions
+that must hold for the rewrite to apply. For example, the constant folding
+ruleset below demonstrates how conditional branches with constant predicates
+can be simplified:
 
 ```python
 
@@ -544,6 +569,36 @@ local costs of its unique children. In Loop1 (#1) and Loop2 (#2) the cost of
 the Body is contributing to their local costs, respectively.
 :::
 
+
+### Evaluating Scalability
+
+A scalability analysis was conducted by scaling the matrix multiplication
+associativity example from [](#associativity-rule-of-matrix-multiply) to an
+increasing number of operations. Here, $k$ represents the number of matrices,
+and $k - 1$ corresponds to the number of matrix multiplications. This subjects
+the compiler to a pathological scenario due to the combinatorial explosion
+caused by the associativity rule. @fig:egraph_scaling_matmul shows that the
+e-graph exhibits polynomial scaling behavior. The number of e-classes shows
+sub-quadratic growth ($k^{1.75}$) while the number of e-nodes exhibits
+sub-cubic growth ($k^{2.44}$). This growth rate is substantially lower than the
+theoretical exponential rate because e-graphs inherently perform structural
+matching that compresses the representation.
+
+Both saturation and extraction phases exhibit sub-quadratic scaling ($n^{1.8}$)
+w.r.t. number of e-classses. In practice, such pathological cases of
+long chains of associative operations are uncommon, and since associativity
+rules serve only optimization purposes, compilation time can be capped as
+needed. The sub-quadratic growth ensures EqSat remains tractable for realistic
+numerical programs.
+
+:::{figure} egraph_scaling_matmul.png
+:label: fig:egraph_scaling_matmul
+(a) Left: saturation and extraction time scaling w.r.t. e-graph size.
+(b) Right: e-graph size scaling w.r.t. matrix-multiplication chain length.
+:::
+
+
+
 ### Further considerations
 
 This work represents an early stage in the substantial development work of
@@ -660,6 +715,11 @@ into multiplications after the applying the pade44 approximation for `tanh()`.
 
 As a result, user programs can be optimized without requiring direct
 modifications. Each rewrite rule is also reusable across different programs.
+Performance evaluation demonstrates 9× speedup for superoptimized code using
+MLIR code generation compared to Numba v1, which fails to achieve speedup over
+vanilla Python due to computation dominated by transcendental functions.
+
+
 
 Two ways are envisioned for users to take advantage of this kind of program
 rewriting.
@@ -671,7 +731,7 @@ The second is to use a cost model to guide the selection of approximation
 functions. The cost model can be extended to account not only for runtime
 performance but also for floating-point accuracy.
 
-
+(associativity-rule-of-matrix-multiply)=
 ### Associativity Rule of Matrix Multiply
 
 
@@ -886,6 +946,20 @@ optimization undermine the benefits of abstractions, making the program harder
 to read, maintain, and improve. Numba v2 will enable this kind of
 superoptimization automatically.
 
+A comprehensive performance evaluation using grid search across different
+matrix sizes demonstrates significant performance improvements over the
+original unoptimized code. @fig:bench_matmul shows an average speedup of 2.25×
+achieved purely through algebraic reorganization without machine code
+generation.
+
+
+:::{figure} bench_matmul.png
+:label: fig:bench_matmul
+:width: 100%
+Performance distribution of superoptimized programs using matrix-multiplication
+associativity rules across different matrix sizes.
+:::
+
 
 ### High-level Tensor Rewrite
 
@@ -990,6 +1064,28 @@ Domain experts can translate their optimization techniques into reusable rules,
 enabling the entire community to benefit from collective knowledge. This
 approach contrasts with the current workflow, where optimizations are developed
 in isolation and rarely reused.
+
+Performance evaluation using additional distributive rules was conducted across different
+matrix sizes on programs of the form:
+
+```python
+def original_mma(input_1, input_2, input_3, input_4):
+   return input_1 @ (input_2 + input_3) @ input_4
+```
+
+@fig:bench_tensat shows performance variations ranging from 0.25× to 50×
+speedup with high variance and a mean of 0.97×.
+Performance degradations occur due to inadequate cost modeling of
+non-arithmetic operations, particularly matrix concatenation (`hstack`,
+`vstack`), which demonstrates the importance of sophisticated cost modeling.
+
+
+:::{figure} bench_tensat.png
+:label: fig:bench_tensat
+:width: 100%
+Performance distribution of superoptimized programs using TASO/TENSAT-inspired
+tensor rewrite rules across different matrix sizes.
+:::
 
 
 ## Conclusion
