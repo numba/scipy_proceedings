@@ -46,6 +46,9 @@ project:
         - lawrence2007
         - bellman1958
         - llama3.np 
+        # stepp2011 is supposed to be https://dl.acm.org/doi/abs/10.5555/2395310
+        # but the doi check failed
+        - stepp2011 
   exports:
     - id: pdf
       format: typst
